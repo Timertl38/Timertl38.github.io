@@ -1,0 +1,893 @@
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+const W = canvas.width;
+const H = canvas.height;
+
+// ================= STATE =================
+let gameState = "start"; // start | playing | end
+let difficulty = "easy";
+let level = 1;
+let endMessage = "";
+
+// ================= PLAYER =================
+let ball = { x: W / 2, y: H / 2, radius: 15, speed: 4 };
+
+// ================= GAME DATA =================
+let coins = [];
+let obstacles = [];
+let enemies = [];
+let bullets = [];
+let score = 0;
+
+let totalCoins = 5;
+let baseTime = 15;
+let countdownTime = 15;
+let timeLeft = 15;
+let startTime = 0;
+// ================= START & END SCREEN ANIMATIES =================
+
+let startPulse = 0;
+let startPulseDir = 1;
+
+function drawStartScreen(){
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0,0,W,H);
+
+  // Pulserende titel
+  startPulse += 0.05 * startPulseDir;
+  if(startPulse > 1 || startPulse < -1) startPulseDir *= -1;
+
+  ctx.shadowColor = "red";
+  ctx.shadowBlur = 20 + startPulse*10;
+  ctx.font = `${48 + startPulse*5}px 'Creepster', cursive`;
+  ctx.fillStyle = "red";
+  ctx.textAlign = "center";
+  ctx.fillText("DEADMAN", W/2, H/2-20);
+  ctx.shadowBlur = 0;
+
+  // Click to start tekst pulseert
+  ctx.font = "18px Arial";
+  ctx.fillStyle = `rgba(255,255,255,${0.7 + 0.3*Math.sin(Date.now()/500)})`;
+  ctx.fillText("Click to Start", W/2, H/2+50);
+
+  // Knoppen met hover effect
+  buttons = [];
+  buttons.push({
+  text:"Instructions",
+  x:W/2-60,
+  y:H/2+160,
+  w:120,
+  h:40,
+  action:()=>{ gameState="instructions"; }
+});
+  const btns = [
+    {text:"Easy", action:()=>{difficulty="easy"; startGame(true);}},
+    {text:"Medium", action:()=>{difficulty="medium"; startGame(true);}},
+    {text:"Hard", action:()=>{difficulty="hard"; startGame(true);}}
+  ];
+  btns.forEach((b,i)=>{
+    let btnX = W/2 - 150 + i*90;
+    let btnY = H/2 + 100;
+    buttons.push({text:b.text, x:btnX, y:btnY, w:80, h:40, action:b.action});
+  });
+
+  buttons.forEach(b=>{
+    const hover = mouse.x>b.x && mouse.x<b.x+b.w && mouse.y>b.y && mouse.y<b.y+b.h;
+    ctx.fillStyle = hover ? "#1abc9c" : "#34495e";
+    ctx.fillRect(b.x,b.y,b.w,b.h);
+    ctx.fillStyle="white";
+    ctx.font="16px Arial";
+    ctx.textAlign="center";
+    ctx.fillText(b.text,b.x+b.w/2,b.y+b.h/2 +6);
+  });
+}
+function drawInstructionScreen(){
+  ctx.fillStyle = "black";
+  ctx.fillRect(0,0,W,H);
+
+  ctx.fillStyle = "white";
+  ctx.textAlign = "center";
+
+  ctx.font = "36px Arial";
+  ctx.fillText("HOW TO PLAY", W/2, 80);
+
+  ctx.font = "18px Arial";
+
+  ctx.fillText("Move: Arrow Keys", W/2, 150);
+  ctx.fillText("Dash: Space (3 charges)", W/2, 180);
+  ctx.fillText("Use Power-up: CTRL", W/2, 210);
+  ctx.fillText("Collect all coins to win", W/2, 240);
+  ctx.fillText("Avoid enemies & bullets", W/2, 270);
+  ctx.fillText("Boss every 3 levels", W/2, 300);
+
+  ctx.fillText("Click button to go back", W/2, 360);
+
+  // knop
+  buttons = [];
+  buttons.push({
+    text: "Back",
+    x: W/2 - 60,
+    y: 400,
+    w: 120,
+    h: 40,
+    action: () => gameState = "start"
+  });
+
+  buttons.forEach(b=>{
+    ctx.fillStyle="#34495e";
+    ctx.fillRect(b.x,b.y,b.w,b.h);
+    ctx.fillStyle="white";
+    ctx.font="16px Arial";
+    ctx.fillText(b.text, b.x + b.w/2, b.y + 25);
+  });
+}
+let endPulse = 0;
+let endPulseDir = 1;
+
+function drawEndScreen(){
+  // semi-transparante overlay
+  ctx.fillStyle="rgba(0,0,0,0.6)";
+  ctx.fillRect(0,0,W,H);
+
+  // Pulserende message
+  endPulse += 0.03*endPulseDir;
+  if(endPulse>1 || endPulse<-1) endPulseDir*=-1;
+
+  ctx.fillStyle = `rgba(255,255,255,${0.8 + 0.2*Math.sin(Date.now()/300)})`;
+  ctx.font = `${32 + endPulse*4}px Arial`;
+  ctx.textAlign = "center";
+  ctx.fillText(endMessage,W/2,H/2-40);
+
+  // Knoppen met hover effect
+  buttons.forEach(b=>{
+    const hover = mouse.x>b.x && mouse.x<b.x+b.w && mouse.y>b.y && mouse.y<b.y+b.h;
+    ctx.fillStyle = hover ? "#1abc9c" : "#34495e";
+    ctx.fillRect(b.x,b.y,b.w,b.h);
+    ctx.fillStyle="white";
+    ctx.font="16px Arial";
+    ctx.fillText(b.text,b.x+b.w/2,b.y+b.h/2 +6);
+  });
+}
+// ================= DASH SYSTEM =================
+const maxDashes = 3;
+let dashSlots = [
+  { ready: true, cooldown: 2000, lastUsed: 0 },
+  { ready: true, cooldown: 2000, lastUsed: 0 },
+  { ready: true, cooldown: 2000, lastUsed: 0 }
+];
+let dashDuration = 150;
+let isDashing = false;
+let dashStartTime = 0;
+let currentDashIndex = null;
+let dashTrail = [];
+
+function startDash() {
+  for (let i = 0; i < dashSlots.length; i++) {
+    if (dashSlots[i].ready) {
+      dashSlots[i].ready = false;
+      dashSlots[i].lastUsed = Date.now();
+      isDashing = true;
+      dashStartTime = Date.now();
+      currentDashIndex = i;
+      break;
+    }
+  }
+}
+
+function updateDash() {
+  if (isDashing && Date.now() - dashStartTime >= dashDuration) {
+    isDashing = false;
+    currentDashIndex = null;
+  }
+  dashSlots.forEach(d => {
+    if (!d.ready && Date.now() - d.lastUsed >= d.cooldown) d.ready = true;
+  });
+}
+
+// ================= POWER-UPS =================
+let powerUps = [];
+let inventory = [];
+let activePowerUp = null;
+let powerUpTimer = 0;
+const powerUpDuration = 5000;
+const magnetRadius = 100;
+let shieldActive = false;
+
+function spawnPowerUps() {
+  powerUps = [
+    { type: "magnet", x: Math.random()*(W-40)+20, y: Math.random()*(H-40)+20, radius: 12, active: false },
+    { type: "shield", x: Math.random()*(W-40)+20, y: Math.random()*(H-40)+20, radius: 12, active: false }
+  ];
+}
+
+function checkPowerUpPickup() {
+  powerUps.forEach(p => {
+    if (!p.active && Math.hypot(ball.x - p.x, ball.y - p.y) < ball.radius + p.radius) {
+      inventory.push(p.type);
+      p.active = true;
+    }
+  });
+}
+
+window.addEventListener("keydown", e => {
+  if (e.key === "Control" && !activePowerUp && inventory.length > 0) {
+    activePowerUp = inventory.shift();
+    powerUpTimer = Date.now();
+    if (activePowerUp === "shield") shieldActive = true;
+  }
+});
+
+function updatePowerUps(){
+  if(activePowerUp){
+    let elapsed = Date.now() - powerUpTimer;
+    if(elapsed >= powerUpDuration){
+      activePowerUp = null;
+      shieldActive = false;
+    } else if(activePowerUp==="magnet"){
+      coins.forEach(c=>{
+        let dx = ball.x - c.x;
+        let dy = ball.y - c.y;
+        let dist = Math.hypot(dx,dy);
+        if(dist < magnetRadius){ c.x += dx*0.05; c.y += dy*0.05; }
+      });
+    }
+  }
+}
+
+// ================= POWER-UP VISUAL EFFECTS =================
+function drawActivePowerUpEffects() {
+    if (!activePowerUp) return;
+
+    if (activePowerUp === "magnet") {
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.radius + 20, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(0,255,255,0.2)";
+        ctx.fill();
+    } else if (activePowerUp === "shield") {
+        let pulse = Math.sin((Date.now() - powerUpTimer) / 100) * 5;
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.radius + 10 + pulse, 0, Math.PI * 2);
+        ctx.strokeStyle = "lime";
+        ctx.lineWidth = 4;
+        ctx.stroke();
+    }
+}
+
+// ================= HIGHSCORE =================
+function getHighscore() { return parseInt(localStorage.getItem("highscore_" + difficulty)) || 0; }
+function setHighscore(value) { localStorage.setItem("highscore_" + difficulty, value); }
+
+// ================= DIFFICULTY =================
+function applyDifficultySettings() {
+  if (difficulty === "easy") { ball.speed = 4; baseTime = 15; }
+  if (difficulty === "medium") { ball.speed = 5; baseTime = 12; }
+  if (difficulty === "hard") { ball.speed = 6; baseTime = 10; }
+}
+
+// ================= LEVEL SCALING =================
+function applyLevelScaling() {
+  totalCoins = 4 + level * 2;
+  let difficultyBonus = difficulty === "easy" ? 5 : difficulty === "medium" ? 3 : 0;
+  countdownTime = Math.max(5, baseTime - level * 0.7 + difficultyBonus + level);
+  createObstacles(level + 1);
+  spawnPowerUps();
+
+  const levelColors = ["#1b3a2d", "#f4e2a1", "#8b5a2b"];
+  bgColor = levelColors[(level-1) % 3];
+
+  if(level % 3 === 0){
+    spawnBoss();
+  } else {
+    createEnemies(level);
+    boss = null;
+  }
+}
+
+// ================= START GAME =================
+let bgColor = "white";
+
+// Boss data
+let boss = null;
+let bossDrops = [];
+
+function spawnBoss(){
+  boss = { 
+    x: W/2, 
+    y: 50, 
+    radius: 25, 
+    speed: 1.2, 
+    shootInterval: 2000, 
+    lastShot: Date.now(),
+    maxHealth: 3,
+    health: 3
+  };
+  bullets = [];
+  bossDrops = [
+    {x: Math.random()*(W-20)+10, y: Math.random()*(H-60)+30, radius:10, collected:false},
+    {x: Math.random()*(W-20)+10, y: Math.random()*(H-60)+30, radius:10, collected:false},
+    {x: Math.random()*(W-20)+10, y: Math.random()*(H-60)+30, radius:10, collected:false},
+  ];
+}
+
+function startGame(resetLevel = false) {
+  if (resetLevel) level = 1;
+  score = 0;
+  applyDifficultySettings();
+  applyLevelScaling();
+  coins = [];
+  bullets = [];
+  dashTrail = [];
+  inventory = [];
+  createCoins();
+  ball.x = W / 2; ball.y = H / 2;
+  startTime = Date.now();
+  timeLeft = countdownTime;
+  dashSlots.forEach(d => d.ready = true);
+  isDashing = false;
+  shieldActive = false;
+  activePowerUp = null;
+  gameState = "playing";
+}
+
+// ================= OBJECT CREATION =================
+function createCoins() {
+  for (let i = 0; i < totalCoins; i++) coins.push({ x: Math.random()*(W-20)+10, y: Math.random()*(H-20)+10, r: 10 });
+}
+
+function createObstacles(amount) {
+  obstacles = [];
+  for (let i = 0; i < amount; i++) {
+    const horizontal = Math.random() < 0.5;
+    if (horizontal) obstacles.push({ x: Math.random()*(W-80), y: Math.random()*(H-20), w: 80, h: 20 });
+    else obstacles.push({ x: Math.random()*(W-20), y: Math.random()*(H-80), w: 20, h: 80 });
+  }
+}
+
+function createEnemies(amount) {
+  enemies = [];
+  const corners = [ {x:20,y:20}, {x:W-20,y:20}, {x:20,y:H-20}, {x:W-20,y:H-20} ];
+  for (let i = 0; i < amount; i++) {
+    const typeRand = Math.random();
+    const c = corners[i % 4];
+    if (typeRand < 0.5) enemies.push({ x:c.x, y:c.y, radius:12, speed:1.5+level*0.3, type:"normal" });
+    else if (typeRand < 0.8) enemies.push({ x:c.x, y:c.y, radius:12, speed:2+level*0.5, type:"fast" });
+    else enemies.push({ x:c.x, y:c.y, radius:12, speed:1, type:"shooter", shootInterval:2000, lastShot: Date.now() });
+  }
+}
+
+// ================= DRAW =================
+function drawDashTrail(){
+  for(let i=dashTrail.length-1; i>=0; i--){
+    const t=dashTrail[i];
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, ball.radius,0,Math.PI*2);
+    ctx.fillStyle=`rgba(52,152,219,${t.alpha})`;
+    ctx.fill();
+    t.alpha -= 0.05;
+    if(t.alpha<=0) dashTrail.splice(i,1);
+  }
+}
+
+function drawBall() {
+    const gradient = ctx.createRadialGradient(ball.x - 3, ball.y - 3, ball.radius*0.2, ball.x, ball.y, ball.radius);
+    gradient.addColorStop(0, "#85c1e9"); // lichtblauw highlight
+    gradient.addColorStop(1, "#3498db"); // standaard blauw
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+    ctx.fillStyle = gradient;
+    ctx.shadowColor = "rgba(0,0,0,0.4)";
+    ctx.shadowBlur = 8;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+}
+
+function drawCoins() {
+  coins.forEach(c=>{
+    ctx.beginPath(); ctx.arc(c.x,c.y,c.r,0,Math.PI*2); ctx.fillStyle="gold"; ctx.fill();
+    ctx.lineWidth=2; ctx.strokeStyle="yellow"; ctx.stroke();
+  });
+}
+
+function drawObstacles() { ctx.fillStyle="#2c3e50"; obstacles.forEach(o=>ctx.fillRect(o.x,o.y,o.w,o.h)); }
+
+function drawEnemies() {
+  enemies.forEach(e => {
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.radius, 0, Math.PI*2);
+
+    let gradient;
+    if(e.type==="normal"){
+      gradient = ctx.createRadialGradient(e.x-2,e.y-2, e.radius*0.2, e.x, e.y, e.radius);
+      gradient.addColorStop(0,"#ff6666"); // highlight
+      gradient.addColorStop(1,"red");
+    } else if(e.type==="fast"){
+      gradient = ctx.createRadialGradient(e.x-2,e.y-2, e.radius*0.2, e.x, e.y, e.radius);
+      gradient.addColorStop(0,"#ffb84d");
+      gradient.addColorStop(1,"orange");
+    } else if(e.type==="shooter"){
+      gradient = ctx.createRadialGradient(e.x-2,e.y-2, e.radius*0.2, e.x, e.y, e.radius);
+      gradient.addColorStop(0,"#d18cff");
+      gradient.addColorStop(1,"purple");
+    }
+
+    ctx.fillStyle = gradient;
+    ctx.shadowColor = "rgba(0,0,0,0.3)";
+    ctx.shadowBlur = 6;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  });
+}
+function drawBullets(){
+  bullets.forEach(b=>{
+    const gradient = ctx.createRadialGradient(b.x-1,b.y-1,0,b.x,b.y,b.radius);
+    gradient.addColorStop(0,"#ffff99");
+    gradient.addColorStop(0.5,"#ffff33");
+    gradient.addColorStop(1,"black");
+
+    ctx.beginPath();
+    ctx.arc(b.x,b.y,b.radius,0,Math.PI*2);
+    ctx.fillStyle = gradient;
+    ctx.shadowColor = "yellow";
+    ctx.shadowBlur = 6;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  });
+}
+
+function drawPowerUps(){
+  powerUps.forEach(p=>{
+    if(!p.active){
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI*2);
+      ctx.fillStyle = p.type==="magnet"?"cyan":"lime";
+      ctx.fill();
+      ctx.lineWidth=2; ctx.strokeStyle="white";
+      ctx.stroke();
+    }
+  });
+}
+
+function drawInventory(){
+  ctx.fillStyle="rgba(0,0,0,0.6)";
+  ctx.fillRect(W-150, H-30, 140, 25);
+  ctx.fillStyle="white";
+  ctx.font="14px Arial";
+  ctx.fillText("Inventory: " + inventory.join(", "), W-140, H-12);
+}
+
+// ================= HUD =================
+function drawHUD() {
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.fillRect(5, 5, 180, 90);
+
+  ctx.fillStyle = "white";
+  ctx.font = "16px Arial";
+  ctx.fillText("Level: " + level, 50, 25);
+  ctx.fillText("Highscore: " + getHighscore(), 60, 45);
+  ctx.fillText("Coins: " + score + " / " + totalCoins, 50, 65);
+
+  ctx.fillStyle = timeLeft <= 3 ? "red" : "white";
+  ctx.fillText("Time: " + timeLeft.toFixed(1), 50, 85);
+
+  dashSlots.forEach((d, i) => {
+    ctx.fillStyle = d.ready ? "green" : "red";
+    ctx.fillRect(W - 150, 50 + i * 25, 100, 20);
+    ctx.strokeStyle = "black";
+    ctx.strokeRect(W - 150, 50 + i * 25, 100, 20);
+    ctx.fillStyle = "white";
+    ctx.font = "12px Arial";
+    ctx.fillText("Dash " + (i + 1), W - 110, 65 + i * 25);
+  });
+
+  if (activePowerUp) {
+    ctx.fillStyle = "white";
+    ctx.fillText(activePowerUp.toUpperCase() + " ACTIVE!", W / 2 - 60, H - 20);
+  }
+
+  drawInventory();
+}
+
+// ================= COLLISION =================
+function collidesWithObstacle(x,y,r) {
+  for(let o of obstacles) if(x+r>o.x && x-r<o.x+o.w && y+r>o.y && y-r<o.y+o.h) return true;
+  return false;
+}
+
+// ================= ENEMY AI =================
+function moveEnemies() {
+  enemies.forEach(e=>{
+    if(e.type==="normal" || e.type==="fast"){
+      let dx=ball.x-e.x; let dy=ball.y-e.y; let dist=Math.hypot(dx,dy); if(dist===0) return; dx/=dist; dy/=dist;
+      let newX=e.x+dx*e.speed; let newY=e.y+dy*e.speed;
+      if(!collidesWithObstacle(newX,newY,e.radius)){ e.x=newX; e.y=newY; }
+      else { let tryX=e.x+dx*e.speed; if(!collidesWithObstacle(tryX,e.y,e.radius)) e.x=tryX;
+             let tryY=e.y+dy*e.speed; if(!collidesWithObstacle(e.x,tryY,e.radius)) e.y=tryY; }
+    } else if(e.type==="shooter"){
+      if(Date.now()-e.lastShot>=e.shootInterval){
+        let dx=ball.x-e.x; let dy=ball.y-e.y; let dist=Math.hypot(dx,dy); dx/=dist; dy/=dist;
+        bullets.push({x:e.x,y:e.y,dx:dx*4,dy:dy*4,radius:5}); e.lastShot=Date.now();
+      }
+    }
+  });
+}
+
+// ================= BULLETS MOVEMENT =================
+function moveBullets(){
+  bullets.forEach((b,i)=>{
+    b.x+=b.dx; b.y+=b.dy;
+    if(b.x<0 || b.x>W || b.y<0 || b.y>H) bullets.splice(i,1);
+    if(!shieldActive && Math.hypot(ball.x-b.x, ball.y-b.y)<ball.radius+b.radius){ endMessage="SHOT!"; createEndMenu(false); gameState="end"; }
+  });
+}
+
+// ================= PLAYER COLLISION =================
+function checkObstacleCollision(){
+  if(collidesWithObstacle(ball.x,ball.y,ball.radius)){
+    if(keys["ArrowUp"]) ball.y+=ball.speed;
+    if(keys["ArrowDown"]) ball.y-=ball.speed;
+    if(keys["ArrowLeft"]) ball.x+=ball.speed;
+    if(keys["ArrowRight"]) ball.x-=ball.speed;
+  }
+}
+
+function checkEnemyCollision(){
+  if(shieldActive) return;
+  for(let e of enemies){
+    if(e.type==="normal" || e.type==="fast"){
+      if(Math.hypot(ball.x-e.x, ball.y-e.y)<ball.radius+e.radius){ endMessage="CAUGHT!"; createEndMenu(false); gameState="end"; }
+    }
+  }
+}
+
+// ================= PLAYER MOVEMENT =================
+let keys={};
+window.addEventListener("keydown", e=>keys[e.key]=true);
+window.addEventListener("keyup", e=>keys[e.key]=false);
+window.addEventListener("keydown", e=>{ if(e.code==="Space") startDash(); });
+
+function moveBall(){
+  let moveX=0, moveY=0;
+  if(keys["ArrowUp"]) moveY-=ball.speed;
+  if(keys["ArrowDown"]) moveY+=ball.speed;
+  if(keys["ArrowLeft"]) moveX-=ball.speed;
+  if(keys["ArrowRight"]) moveX+=ball.speed;
+  if(isDashing){ moveX*=3; moveY*=3; dashTrail.push({x:ball.x,y:ball.y,alpha:1}); }
+  ball.x+=moveX; ball.y+=moveY;
+  ball.x=Math.max(ball.radius,Math.min(W-ball.radius,ball.x));
+  ball.y=Math.max(ball.radius,Math.min(H-ball.radius,ball.y));
+}
+
+// ================= BOSS FUNCTIONS =================
+function moveBoss(){
+  if(!boss) return;
+  let dx = ball.x - boss.x;
+  let dy = ball.y - boss.y;
+  let dist = Math.hypot(dx,dy);
+  if(dist===0) return;
+  dx/=dist; dy/=dist;
+  boss.x+=dx*boss.speed;
+  boss.y+=dy*boss.speed;
+
+  // Boss schiet naar speler
+  if(Date.now()-boss.lastShot>=boss.shootInterval){
+    let dx = ball.x - boss.x;
+    let dy = ball.y - boss.y;
+    let baseAngle = Math.atan2(dy, dx);
+    let spread = 0.2;
+    for(let i=-1; i<=1; i++){
+      let angle = baseAngle + i * spread;
+      bullets.push({ x: boss.x, y: boss.y, dx: Math.cos(angle)*4, dy: Math.sin(angle)*4, radius: 5 });
+    }
+    boss.lastShot = Date.now();
+  }
+}
+
+function drawBoss(){
+  if(!boss) return;
+  const gradient = ctx.createRadialGradient(boss.x-3,boss.y-3,boss.radius*0.2,boss.x,boss.y,boss.radius);
+  gradient.addColorStop(0,"#e0b3ff"); // highlight
+  gradient.addColorStop(1,"purple");
+  ctx.beginPath();
+  ctx.arc(boss.x,boss.y,boss.radius,0,Math.PI*2);
+  ctx.fillStyle = gradient;
+  ctx.shadowColor = "rgba(0,0,0,0.5)";
+  ctx.shadowBlur = 10;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function drawBossDrops(){
+  bossDrops.forEach(d=>{
+    if(!d.collected){
+      ctx.beginPath();
+      ctx.arc(d.x,d.y,d.radius,0,Math.PI*2); ctx.fillStyle="purple"; ctx.fill();
+      ctx.lineWidth=2; ctx.strokeStyle="white"; ctx.stroke();
+    }
+  });
+}
+
+// ================= BOSS HEALTH =================
+function drawBossHealthBar(){
+  if(!boss) return;
+  const barWidth = 60;
+  const barHeight = 8;
+  const x = boss.x - barWidth/2;
+  const y = boss.y - boss.radius - 15;
+  ctx.fillStyle = "gray";
+  ctx.fillRect(x, y, barWidth, barHeight);
+  const healthWidth = (boss.health / boss.maxHealth) * barWidth;
+  ctx.fillStyle = "red";
+  ctx.fillRect(x, y, healthWidth, barHeight);
+  ctx.strokeStyle = "black";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, barWidth, barHeight);
+}
+
+function checkBossDrops(){
+  bossDrops.forEach(d=>{
+    if(!d.collected && Math.hypot(ball.x-d.x,ball.y-d.y)<ball.radius+d.radius){
+      d.collected = true;
+
+      // Boss health verlagen
+      if(boss){
+        boss.health--;
+        if(boss.health <= 0){
+          boss = null;
+          endMessage="LEVEL COMPLETE!";
+          createEndMenu(true);
+        }
+      }
+    }
+  });
+}
+
+// ================= START SCREEN (OLD - NIET GEBRUIKT) =================
+function drawStartScreenOLD(){
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0,0,W,H);
+  ctx.shadowColor = "red";
+  ctx.shadowBlur = 20;
+  ctx.font = "48px 'Creepster', cursive";
+  ctx.fillStyle = "red";
+  ctx.fillText("DEADMAN", W/2-80, H/2-20);
+  ctx.shadowBlur = 0;
+  ctx.font = "18px Arial";
+  ctx.fillStyle = "white";
+  ctx.fillText("Click to Start", W/2-60, H/2+50);
+
+  buttons = [];
+  buttons.push({text:"Easy",x:W/2-150,y:H/2+100,w:80,h:40,action:()=>{difficulty="easy"; startGame(true);}});
+  buttons.push({text:"Medium",x:W/2-40,y:H/2+100,w:80,h:40,action:()=>{difficulty="medium"; startGame(true);}});
+  buttons.push({text:"Hard",x:W/2+70,y:H/2+100,w:80,h:40,action:()=>{difficulty="hard"; startGame(true);}});
+
+  buttons.forEach(b=>{
+    ctx.fillStyle="#34495e";
+    ctx.fillRect(b.x,b.y,b.w,b.h);
+    ctx.fillStyle="white";
+    ctx.font="16px Arial";
+    ctx.fillText(b.text,b.x+10,b.y+25);
+  });
+}
+
+// ================= END SCREEN =================
+let buttons=[]; let mouse={x:0,y:0};
+canvas.addEventListener("mousemove", e=>{ const rect=canvas.getBoundingClientRect(); mouse.x=e.clientX-rect.left; mouse.y=e.clientY-rect.top; });
+canvas.addEventListener("click", ()=>{ buttons.forEach(b=>{ if(mouse.x>b.x && mouse.x<b.x+b.w && mouse.y>b.y && mouse.y<b.y+b.h) b.action(); }); });
+
+function createEndMenu(win){
+  buttons=[];
+  if(win) buttons.push({text:"Next Level",x:W/2-100,y:H/2+10,w:200,h:40,action:()=>{level++; startGame();}});
+  buttons.push({text:"Restart (Level 1)",x:W/2-100,y:H/2+60,w:200,h:40,action:()=>startGame(true)});
+  buttons.push({text:"Quit",x:W/2-70,y:H/2+110,w:140,h:40,action:()=>gameState="start"});
+}
+
+// ================= END SCREEN (OLD - NIET GEBRUIKT) =================
+function drawEndScreenOLD(){
+  ctx.fillStyle="rgba(0,0,0,0.6)"; 
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle="white"; 
+  ctx.font="32px Arial"; 
+  ctx.fillText(endMessage,W/2-140,H/2-40);
+  buttons.forEach(b=>{ 
+    ctx.fillStyle="#34495e"; 
+    ctx.fillRect(b.x,b.y,b.w,b.h); 
+    ctx.fillStyle="white"; 
+    ctx.font="16px Arial"; 
+    ctx.fillText(b.text,b.x+20,b.y+25); 
+  });
+}
+// ================= VISUELE TOEVOEGINGEN =================
+
+// Glans-effect voor coins
+function drawCoins(){
+  coins.forEach(c=>{
+    ctx.beginPath();
+    ctx.arc(c.x,c.y,c.r,0,Math.PI*2);
+    let gradient = ctx.createRadialGradient(c.x,c.y,0,c.x,c.y,c.r);
+    gradient.addColorStop(0,"#fff700");
+    gradient.addColorStop(0.5,"gold");
+    gradient.addColorStop(1,"orange");
+    ctx.fillStyle = gradient;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "yellow";
+    ctx.stroke();
+  });
+}
+
+// Pulsing dash trail
+function drawDashTrail(){
+  for(let i=dashTrail.length-1;i>=0;i--){
+    let t=dashTrail[i];
+    ctx.beginPath();
+    ctx.arc(t.x,t.y,ball.radius,0,Math.PI*2);
+    ctx.fillStyle=`rgba(52,152,219,${t.alpha})`;
+    ctx.fill();
+    t.alpha -= 0.05;
+    if(t.alpha<=0) dashTrail.splice(i,1);
+  }
+}
+
+// Power-up visuele effecten
+function drawActivePowerUpEffects(){
+  if(!activePowerUp) return;
+
+  if(activePowerUp==="magnet"){
+    ctx.beginPath();
+    ctx.arc(ball.x,ball.y,ball.radius+magnetRadius*0.5,0,Math.PI*2);
+    ctx.fillStyle="rgba(0,255,255,0.15)";
+    ctx.fill();
+  }
+  if(activePowerUp==="shield"){
+    let pulse = Math.sin(Date.now()/100)*5;
+    ctx.beginPath();
+    ctx.arc(ball.x,ball.y,ball.radius+10+pulse,0,Math.PI*2);
+    ctx.strokeStyle="lime";
+    ctx.lineWidth=3;
+    ctx.stroke();
+  }
+}
+
+// Boss health bar visueel verbeteren
+function drawBossHealthBar(){
+  if(!boss) return;
+  const barWidth = 60;
+  const barHeight = 8;
+  const x = boss.x - barWidth/2;
+  const y = boss.y - boss.radius - 15;
+
+  // achtergrond
+  ctx.fillStyle="rgba(0,0,0,0.5)";
+  ctx.fillRect(x,y,barWidth,barHeight);
+
+  // health
+  const healthWidth = (boss.health/boss.maxHealth)*barWidth;
+  const gradient = ctx.createLinearGradient(x,y,x+barWidth,y);
+  gradient.addColorStop(0,"red");
+  gradient.addColorStop(0.5,"orange");
+  gradient.addColorStop(1,"yellow");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(x,y,healthWidth,barHeight);
+
+  // rand
+  ctx.strokeStyle="black";
+  ctx.lineWidth=2;
+  ctx.strokeRect(x,y,barWidth,barHeight);
+}
+
+// Boss drops pulserend effect
+function drawBossDrops(){
+  bossDrops.forEach(d=>{
+    if(!d.collected){
+      let pulse = Math.sin(Date.now()/100+d.x)*3;
+      ctx.beginPath();
+      ctx.arc(d.x,d.y,d.radius+pulse,0,Math.PI*2);
+      ctx.fillStyle="purple";
+      ctx.fill();
+      ctx.lineWidth=2;
+      ctx.strokeStyle="white";
+      ctx.stroke();
+    }
+  });
+}
+
+// Bullets glow
+function drawBullets(){
+  bullets.forEach(b=>{
+    ctx.beginPath();
+    ctx.arc(b.x,b.y,b.radius,0,Math.PI*2);
+    ctx.fillStyle="black";
+    ctx.fill();
+    ctx.shadowBlur = 6;
+    ctx.shadowColor = "yellow";
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  });
+}
+
+// Obstacles met lichte gradient
+function drawObstacles(){
+  obstacles.forEach(o=>{
+    const grad = ctx.createLinearGradient(o.x,o.y,o.x+o.w,o.y+o.h);
+    grad.addColorStop(0,"#2c3e50");
+    grad.addColorStop(1,"#34495e");
+    ctx.fillStyle = grad;
+    ctx.fillRect(o.x,o.y,o.w,o.h);
+  });
+}
+// ================= GAME LOOP =================
+function gameLoop(){
+  ctx.clearRect(0,0,W,H);
+
+  if(gameState==="start"){ drawStartScreen(); requestAnimationFrame(gameLoop); return; }
+if(gameState==="instructions"){
+  drawInstructionScreen();
+  requestAnimationFrame(gameLoop);
+  return;
+}
+  if(gameState==="playing"){
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0,0,W,H);
+
+    timeLeft = countdownTime - (Date.now() - startTime)/1000;
+
+    updateDash();
+    updatePowerUps();
+    moveBall();
+    checkObstacleCollision();
+    checkEnemyCollision();
+    checkPowerUpPickup();
+
+    if(boss){
+      moveBoss();
+      checkBossDrops();
+    } else {
+      moveEnemies();
+    }
+
+    moveBullets();
+
+    drawDashTrail();
+    drawBall();
+    drawActivePowerUpEffects();
+    drawCoins();
+    drawObstacles();
+    if(boss){
+      drawBoss();
+      drawBossDrops();
+      drawBossHealthBar();
+    } else {
+      drawEnemies();
+    }
+    drawBullets();
+    drawPowerUps();
+    drawHUD();
+    coins = coins.filter(c=>{
+      if(Math.hypot(ball.x-c.x,ball.y-c.y)<ball.radius+c.r){
+        score++; 
+        return false; 
+      }
+      return true; 
+    });
+
+    if(!boss && score>=totalCoins){
+      endMessage="LEVEL COMPLETE!";
+      createEndMenu(true);
+      gameState="end";
+    }
+
+    if(timeLeft<=0){
+      endMessage="GAME OVER";
+      createEndMenu(false);
+      gameState="end";
+    }
+  }
+
+  if(gameState==="end") drawEndScreen();
+
+  requestAnimationFrame(gameLoop);
+}
+
+// Start the game loop
+gameLoop();
